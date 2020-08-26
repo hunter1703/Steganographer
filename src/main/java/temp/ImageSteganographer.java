@@ -6,7 +6,6 @@ import java.io.File;
 import java.io.IOException;
 
 import static java.awt.image.BufferedImage.TYPE_INT_BGR;
-import static java.awt.image.BufferedImage.TYPE_INT_RGB;
 
 /**
  * User : rahul
@@ -15,30 +14,35 @@ import static java.awt.image.BufferedImage.TYPE_INT_RGB;
  */
 public class ImageSteganographer {
 
+    private static final int IMAGE_TYPE = TYPE_INT_BGR;
+
     public static void encode(final String keyPath, final String imagePath, final String targetPath) throws IOException {
         if (!targetPath.endsWith(".png")) {
             throw new IllegalArgumentException("target file should be a png file");
         }
         final String[] split = imagePath.split("/");
         final String name = split[split.length - 1];
-        final BufferedImage key = ImageIO.read(new File(keyPath));
-        //image to be encoded should have less dimensions than key image dimensions
+        final BufferedImage initialKey = ImageIO.read(new File(keyPath));
         //all image dimensions should be 2 bytes long only (65536 x 65536)
         final BufferedImage image = ImageIO.read(new File(imagePath));
-        final int keyWidth = key.getWidth();
+        int keyWidth = initialKey.getWidth();
         final int imageWidth = image.getWidth();
-        final int keyHeight = key.getHeight();
-        final int imageHeight = image.getHeight();
+        int keyHeight = initialKey.getHeight();
+        int imageHeight = image.getHeight();
         if ((imageWidth >> 16) > 0 || (imageHeight >> 16) > 0) {
             throw new IllegalStateException("Image to be hidden have dimensions greater than 2 bytes");
-        }
-        if (keyWidth < imageWidth || keyHeight < imageHeight) {
-            throw new IllegalStateException("Image to be encoded is larger than the one to hide into : \nkey - [" + keyWidth + "X" + keyHeight + "]\nImage to hide : [" + imageWidth + "X" + imageHeight + "]");
         }
         if ((name.length() >> 8) > 0) {
             throw new IllegalArgumentException("Image to be hidden have name greater than 1 byte");
         }
-        final BufferedImage target = new BufferedImage(keyWidth * 2, keyHeight * 2, TYPE_INT_BGR);
+        final double heightMultiplier = Math.ceil((1.0 * imageHeight) / keyHeight);
+        final double widthMultiplier = Math.ceil((1.0 * imageWidth) / keyWidth);
+        final int multiplier = (int) Math.max(heightMultiplier, widthMultiplier);
+        final BufferedImage key = enlargeKeyImageIfNeeded(initialKey, multiplier);
+        keyWidth *= multiplier;
+        keyHeight *= multiplier;
+        final BufferedImage target = new BufferedImage(2 * keyWidth, 2 * keyHeight, IMAGE_TYPE);
+
 
         for (int i = 0; i < keyWidth; i++) {
             for (int j = 0; j < keyHeight; j++) {
@@ -106,9 +110,9 @@ public class ImageSteganographer {
         final BufferedImage source = ImageIO.read(new File(sourcePath));
         ImageIO.createImageOutputStream(new File(sourcePath)).length();
         final Tuple dimensions = decodeImageResolution(source);
-        final BufferedImage target = new BufferedImage(dimensions.width, dimensions.height, TYPE_INT_RGB);
-        for (int i = 0; i < dimensions.width; i += 2) {
-            for (int j = 0; j < dimensions.height; j += 2) {
+        final BufferedImage target = new BufferedImage(dimensions.width, dimensions.height, IMAGE_TYPE);
+        for (int i = 0; i < source.getWidth(); i += 2) {
+            for (int j = 0; j < source.getHeight(); j += 2) {
                 int r, g, b;
                 int rMM = 0, rML = 0, rLM = 0, rLL = 0;
                 int gMM = 0, gML = 0, gLM = 0, gLL = 0;
@@ -141,10 +145,27 @@ public class ImageSteganographer {
                 r = (rMM << 6) | (rML << 4) + (rLM << 2) + rLL;
                 g = (gMM << 6) | (gML << 4) + (gLM << 2) + gLL;
                 b = (bMM << 6) | (bML << 4) + (bLM << 2) + bLL;
+                if (i / 2 >= dimensions.width || j / 2 >= dimensions.height) {
+                    break;
+                }
                 target.setRGB(i / 2, j / 2, r << 16 | g << 8 | b);
             }
         }
         ImageIO.write(target, "png", new File(targetDirectory + (targetDirectory.endsWith("/") ? "" : "/") + decodeName(source)));
+    }
+
+    private static BufferedImage enlargeKeyImageIfNeeded(final BufferedImage image, final int multiplier) {
+        final BufferedImage enlarged = new BufferedImage(image.getWidth() * multiplier, image.getHeight() * multiplier, IMAGE_TYPE);
+        for (int i = 0; i < image.getWidth(); i++) {
+            for (int j = 0; j < image.getHeight(); j++) {
+                for (int x = i * multiplier; x < i * multiplier + multiplier; x++) {
+                    for (int y = j * multiplier; y < j * multiplier + multiplier; y++) {
+                        enlarged.setRGB(x, y, image.getRGB(i, j));
+                    }
+                }
+            }
+        }
+        return enlarged;
     }
 
     private static void encodeImageResolution(final int width, final int height, final BufferedImage target) {
